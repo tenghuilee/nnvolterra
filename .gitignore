@@ -1,0 +1,8 @@
+result/
+mnist/
+*.pdf
+*.aux
+build/
+__pycache__
+.pytest_cache/
+
