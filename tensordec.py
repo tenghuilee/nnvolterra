@@ -5,10 +5,7 @@ Some Tensor decomposition methods
     - TPM: tensor power method
 """
 
-from operator import truediv
 import numpy as np
-from numpy.core.fromnumeric import ndim
-from numpy.core.records import get_remaining_size
 
 
 def _tpm_core(X: np.ndarray, ridx, factors):
@@ -31,14 +28,20 @@ def _tpm_core(X: np.ndarray, ridx, factors):
         tX = np.transpose(X, axes=trpx)
 
         # [ndimx-1 ... 0]
-        for j in range(ndimx-1, -1, -1):
+        for j in range(ndimx - 1, -1, -1):
             if j == i:
                 continue
             tX = np.matmul(tX, factors[j][ridx])
 
         factors[i][ridx] = tX / np.linalg.norm(tX, ord=2)
-    
-def tensor_power_method(X: np.ndarray, rank=-1, maxiter=400, err=1e-5, truncat=True, verbose=False):
+
+
+def tensor_power_method(X: np.ndarray,
+                        rank=-1,
+                        maxiter=400,
+                        err=1e-5,
+                        truncat=True,
+                        verbose=False):
     """
     X <- w1 u1(1) u2(1) ... + w2 u1(2) u2(2)... + ...
 
@@ -88,7 +91,9 @@ def tensor_power_method(X: np.ndarray, rank=-1, maxiter=400, err=1e-5, truncat=T
         # out of iter
         if not isconverged:
             if verbose:
-                print(f"rank {r} not converged after iter {maxiter} with err {_e}")
+                print(
+                    f"rank {r} not converged after iter {maxiter} with err {_e}"
+                )
 
         tX = outX
         outerfr = np.ones(1)
@@ -106,9 +111,10 @@ def tensor_power_method(X: np.ndarray, rank=-1, maxiter=400, err=1e-5, truncat=T
         outX -= tX * np.reshape(outerfr, shapeX)
         if truncat and np.linalg.norm(outX) < 1e-8:
             # seems converged
-            return weights[0:r+1], [f[0:r+1] for f in factors]
+            return weights[0:r + 1], [f[0:r + 1] for f in factors]
 
     return weights, factors
+
 
 def hosvd(X: np.ndarray, truncat=True, sig=False):
     """
@@ -150,13 +156,13 @@ def hosvd(X: np.ndarray, truncat=True, sig=False):
                 if _acs > 0.999:
                     _rank = k + 1
                     break
-            
-            U = U[:,0:_rank]
+
+            U = U[:, 0:_rank]
             S = S[0:_rank]
-            V = V[0:_rank,:]
-        
+            V = V[0:_rank, :]
+
         xshape[0] = V.shape[0]
-        X = np.reshape(S[:,None] * V, xshape)
+        X = np.reshape(S[:, None] * V, xshape)
 
         Ax.append(U)
         shist.append(S)
@@ -166,7 +172,30 @@ def hosvd(X: np.ndarray, truncat=True, sig=False):
         return X.T, Ax, shist
     else:
         return X.T, Ax
-        
+
+
+def cp_decomp(X: np.ndarray,
+              rank=-1,
+              maxiter=400,
+              err=1e-5,
+              truncat=True,
+              verbose=False):
+    """
+    CP decomposition
+
+    same as tensor_power_method
+    """
+    return tensor_power_method(X, rank, maxiter, err, truncat, verbose)
+
+
+def tucker(X: np.ndarray, truncat=True, sig=False):
+    """
+    Tucker decomposition
+
+    same as hosvd    
+    """
+    return hosvd(X, truncat, sig)
+
 
 def cp_build(weights: np.ndarray, factors):
     """
@@ -228,29 +257,98 @@ def tucker_build(G: np.ndarray, Ax: list):
         G = np.reshape(G, gshape)
 
         # print(gshape)
-    
+
     return G.T
 
 
-def randn_tucker(shape: list, rank: list):
-    """
-    generate random tucker tensors
-
-    Require:
-    - shape: output shape
-    - rank: list|int
-    """
+def __random_tucker(rand_func, shape: list, rank: list, isnormed=False):
     if isinstance(rank, int):
         rank = [rank for _ in shape]
     else:
         assert len(shape) == len(rank), "length of shape and rank must equal"
 
-    for s,r in zip(shape, rank):
+    for s, r in zip(shape, rank):
         assert s >= r, f"shape at (..., s={s}, ...) < rank at (..., r={r}, ...)"
-    
-    G = np.random.randn(*rank)
 
-    Ax = [np.random.randn(s, r) for s, r in zip(shape, rank)]
+    G = rand_func(*rank)
 
-    return tucker_build(G, Ax)
+    Ax = [rand_func(s, r) for s, r in zip(shape, rank)]
 
+    ans = tucker_build(G, Ax)
+
+    if isnormed:
+        ans /= np.linalg.norm(ans)
+    return ans
+
+
+def randn_tucker(shape: list, rank: list, isnormed=False):
+    """
+    generate random tucker tensors| normal distribution
+
+    Require:
+    - shape: output shape
+    - rank: list|int
+    """
+    return __random_tucker(np.random.randn, shape, rank, isnormed)
+
+
+def rand_tucker(shape: list, rank: list, isnormed=False):
+    """
+    generate random tucker tensors | uniform distribution
+
+    Require:
+    - shape: output shape
+    - rank: list|int
+    """
+    return __random_tucker(np.random.rand, shape, rank, isnormed)
+
+
+def __random_matrix(rand_func, shape, rank, isnormed=False):
+    if isinstance(shape, int):
+        shape = (shape, shape)
+    else:
+        assert len(shape) == 2
+
+    _L = rand_func(shape[0], rank)
+    _R = rand_func(rank, shape[1])
+
+    ans = np.matmul(_L, _R)
+    if isnormed:
+        ans /= np.linalg.norm(ans)
+    return ans
+
+
+def randn_rank_matrix(shape, rank, isnormed=False):
+    return __random_matrix(np.random.randn, shape, rank, isnormed)
+
+def rand_rank_matrix(shape, rank, isnormed=False):
+    return __random_matrix(np.random.rand, shape, rank, isnormed)
+
+def randn_rtensor(shape: list, rank=None, isnorm=True):
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
+    if rank is None:
+        ans = np.random.randn(*shape)
+        if isnorm:
+            ans /= np.linalg.norm(ans)
+        return ans
+
+    if len(shape) == 2:
+        return randn_rank_matrix(shape, rank, isnorm)
+    else:
+        return randn_tucker(shape, rank, isnorm)
+
+
+def rand_rtensor(shape: list, rank=None, isnorm=True):
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
+    if rank is None:
+        ans = np.random.rand(*shape)
+        if isnorm:
+            ans /= np.linalg.norm(ans)
+        return ans
+
+    if len(shape) == 2:
+        return rand_rank_matrix(shape, rank, isnorm)
+    else:
+        return rand_tucker(shape, rank, isnorm)

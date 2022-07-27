@@ -1,17 +1,10 @@
 #%%
-import numpy as np
-import npxconv
 import matplotlib.pyplot as plt
+import numpy as np
 
+import npxconv
+from plot_utils import mymarkers, savefig
 
-mymarkers = [".", "^", "+", "x", "*", ",", "|", "d", "_", "v"]
-
-def savefig(fig, tag):
-    print("save tag", tag)
-    fig.savefig(f"result/{tag}.eps", dpi=600, bbox_inches='tight', transparent=True, pad_inches=0)
-    fig.savefig(f"result/{tag}.pdf", dpi=600, bbox_inches='tight', transparent=True, pad_inches=0)
-    fig.savefig(f"result/{tag}.png", dpi=600, bbox_inches='tight', transparent=True, pad_inches=0)
-    fig.savefig(f"result/{tag}.jpg", dpi=600, bbox_inches='tight', transparent=True, pad_inches=0)
 
 #%%
 # order n, perturbutation, statistic
@@ -44,7 +37,7 @@ for eng in [0.5, 3]:
     plt.plot(x, linestyle="-.")
     plt.plot(y)
     plt.legend(["$\mathbf{x}$", "$\mathbf{x} + \epsilon$"], loc="lower right")
-    savefig(fig, f"nnfragile-random-x-eps-{eng}")
+    savefig(fig, f"perturbation-random-x-eps-{eng}")
     plt.close()
 
     print("start statistic")
@@ -59,10 +52,11 @@ for eng in [0.5, 3]:
             oy = npxconv.conv_ordern(Hn, [y]*n)
             dn.append(np.linalg.norm(ox - oy))
         DiffHist.append(np.asarray(dn))
-
+    print("  done")
+    
     fig = plt.figure()
     plt.boxplot(DiffHist)
-    savefig(fig, f"nnfragile-boxplot-l2-norm-eps-{eng}")
+    savefig(fig, f"perturbation-boxplot-l2-norm-eps-{eng}")
     plt.close()
 
 # order 5
@@ -78,7 +72,7 @@ def epsilon_order(Hn, noisy=16, noisyeng=0.1, points=512):
 
     ye = x.copy()
     nloc = np.logspace(0, np.log10(points-1), noisy)
-    nloc = nloc.astype(np.int)
+    nloc = nloc.astype(np.int32)
     # noisyG = noisyeng * np.sign(np.random.randn(points))
     # ye[nloc] += noisyG[nloc]
     ye[nloc] += noisyeng
@@ -97,8 +91,8 @@ def epsilon_order(Hn, noisy=16, noisyeng=0.1, points=512):
     plt.plot(Hcye)
     plt.legend(["$f(\mathbf{x})$", "$f(\mathbf{x} + \epsilon)$"], loc="lower right")
 
-    tag = f"nnfragile-order-{n}-noisy-{noisy}-eng-{noisyeng}"
-    # savefig(fig, tag)
+    tag = f"perturbation-order-{n}-noisy-{noisy}-eng-{noisyeng}"
+    savefig(fig, tag)
     plt.close()
     print(tag, "norm diff output", np.linalg.norm(Hcye - Hcy) / np.linalg.norm(Hcy))
     print(tag, "norm diff input ", np.linalg.norm(ye - x) / np.linalg.norm(x))
@@ -112,7 +106,7 @@ for i in range(1, 8+1):
     Hn.append(H)
 
 epsilon_order(Hn, noisy=30, noisyeng=0.1, points=500)
-# epsilon_order(Hn, noisy=50, noisyeng=0.2, points=500)
+epsilon_order(Hn, noisy=30, noisyeng=0.2, points=500)
 
 O1 = np.ones([8,])
 O2 = np.ones([8,8])

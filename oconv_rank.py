@@ -3,16 +3,27 @@
 
 # # Rank for outer convolution And Check For Volterra
 
-import time
+import argparse
+from sys import stdout
 
-import tensordec
 import numpy as np
 import torch
+
+import tensordec
+from conv_zero import *
+from hackero1net import HackerO1Net1D
+from record_utils import record_append, record_dump_to_file
 from npxconv import conv_ordern, outerconv, outerconv_diag
-import json
+
+_args = argparse.ArgumentParser()
+_args.add_argument("--rand",
+                   type=str,
+                   default="g",
+                   help="random type (g|u) gaussian or uniform")
+
+args = _args.parse_args()
 
 # import matplotlib.pyplot as plt
-
 
 # ## Define OutConv Functions
 #
@@ -28,80 +39,40 @@ import json
 # outconv_n11:
 # $$g \oconv \vec{h}$$
 
-def randn_rank_matrix(shape, rank, isnorm=True):
-    if isinstance(shape, int):
-        shape = (shape, shape)
-    else:
-        assert len(shape) == 2
-
-    _L = np.random.randn(shape[0], rank)
-    _R = np.random.randn(rank, shape[1])
-
-    ans = np.matmul(_L, _R)
-    if isnorm:
-        ans /= np.linalg.norm(ans)
-    return ans
-
-
-def randn_tucker(shape, rank, isnorm=True):
-    ans = tensordec.randn_tucker(shape, rank)
-    if isnorm:
-        ans /= np.linalg.norm(ans)
-    return ans
-
-
-def randn_rtensor(shape: list, rank=None, isnorm=True):
-    if not isinstance(shape, (list, tuple)):
-        shape = [shape]
-    if rank is None:
-        ans = np.random.randn(*shape)
-        if isnorm:
-            ans /= np.linalg.norm(ans)
-        return ans
-
-    if len(shape) == 2:
-        return randn_rank_matrix(shape, rank, isnorm)
-    else:
-        return randn_tucker(shape, rank, isnorm)
-
-
 def compute_sig_acc(X):
     s = np.linalg.svd(X, False, False)
     acc = np.zeros_like(s)
     acc[0] = s[0]
     for i in range(1, s.shape[0], 1):
-        acc[i] = acc[i-1] + s[i]
+        acc[i] = acc[i - 1] + s[i]
     return s, acc / np.sum(s)
 
 
-def singular_val(X: np.ndarray, ndim=-1):
+def singular_value(X: np.ndarray, ndim=-1):
     if X.ndim > 2 and ndim != -1:
         X = np.reshape(X, [np.prod(X.shape[0:ndim]), -1])
     return np.linalg.svd(X, False, False)
 
 
-JLogDict = dict()
-JLogDict["date"] = time.asctime(time.localtime())
-
-
-def append_record(tag: str, info: str, **kwargs):
-    print("append", tag)
-    print("info", info)
-
-    JLogDict[tag] = {
-        "info": info,
-        **kwargs,
-    }
-
-
 suggest_rank = [1, 2, 4, 7, 9, 11, 15]
+
+# filter
+if args.rand == 'g':
+    s_rank_matrix = lambda s, r: tensordec.randn_rank_matrix(s, r, True)
+    s_rtensor = tensordec.randn_rtensor
+    s_tucker = tensordec.randn_tucker
+elif args.rand == 'u':
+    s_rank_matrix = lambda s, r: tensordec.rand_rank_matrix(s, r, True)
+    s_rtensor = tensordec.rand_rtensor
+    s_tucker = tensordec.rand_tucker
+else:
+    raise ValueError("unknow args.rand %s" % args.rand)
 
 # ## Check flip
 
 # In[4]:
 
-
-g = randn_rank_matrix(8, 8)
+g = s_rank_matrix(8, 8)
 h1 = np.random.rand(8)
 h2 = np.random.rand(8)
 
@@ -109,7 +80,7 @@ lhs = outerconv(g, h1, h2)
 rhs = outerconv(np.flip(g, (0, 1)), np.flip(h1), np.flip(h2))
 rhs = np.flip(rhs, (0, 1))
 
-append_record(
+record_append(
     "oconv-check-flip",
     r"check $g \oconv h_1 h_2$ = $\overline{\bar{g} \oconv \bar{h}_1 \bar{h}_2}$",
     diff=np.linalg.norm(lhs - rhs),
@@ -121,23 +92,51 @@ append_record(
 
 task = []
 for r in [1, 2, 3, 4, 6]:
-    g = randn_rank_matrix(9, r)
-    hx = [randn_rtensor(9) for _ in range(2)]
+    g = s_rank_matrix(9, r)
+    hx = [s_rtensor(9) for _ in range(2)]
     out = outerconv(g, hx[0], hx[1])
-    # print(f"g rank {r}, shape {g.shape}")
+    # print(f"g rank {r}, g shape {g.shape}, out shape {out.shape}")
     task.append({
         "kernel_rank": r,
         "kernel_shape": g.shape,
         "signal_length": hx[0].shape[-1],
-        "singular_value": singular_val(out),
+        "singular_value": singular_value(out),
     })
 
-append_record(
+record_append(
     "oconv-rank-after-outer-convolution",
     r"Rank of $g \circledast h_1 h_2$ equals to the rank of $g$",
     tasks=task,
 )
 
+# ### Conv zero
+task = []
+gs = 9
+for r, rh1, rh2 in [(3, 1, 1), (3, 3, 2), (3, 3, 5), (7, 5, 3), (7, 5, 5),
+                    (7, 5, 9), (7, 7, 7)]:
+    g = s_rank_matrix(gs, r)
+    hx = [
+        zero_conv_signal_1d(np.ones(rh1 + 1), gs * 3),
+        zero_conv_signal_1d(np.ones(rh2 + 1), gs * 3),
+    ]
+    # print(hx)
+    # remove the value related to zero padding
+    out = outerconv(g, hx[0], hx[1])[gs:-gs, gs:-gs]
+    # print(f"g rank {r}, g shape {g.shape}, out shape {out.shape}")
+    task.append({
+        "kernel_rank": r,
+        "kernel_shape": g.shape,
+        "signal_init_len1": rh1,
+        "signal_init_len2": rh2,
+        "signal_length": hx[0].shape[-1],
+        "singular_value": singular_value(out),
+    })
+
+record_append(
+    "oconv-rank-zero-convolution",
+    r"Rank of $g \circledast h_1 h_2$ equals to the rank of $g$",
+    tasks=task,
+)
 
 # ### conv rank k kernel and rank r image
 
@@ -165,10 +164,10 @@ for i, j in [(1, 1), (1, 2), (2, 2), (3, 1), (2, 3), (3, 4)]:
         "kernel_rank": ker_rank,
         "image_size": img_size,
         "image_rank": img_rank,
-        "singular_value": singular_val(out),
+        "singular_value": singular_value(out),
     })
 
-append_record(
+record_append(
     "oconv-rank-conv-kernel-image",
     r"rank $k$ kernel convolute rank $r$ image",
     tasks=task,
@@ -180,18 +179,18 @@ append_record(
 # h1 (5); h2 (5,5) rank (2,); h3 (5,5,5) rank (2,3,4)
 shape = [3, 3, 3, 3]
 rank = [2, 3, 3, 2]
-g = randn_rtensor(shape, rank)
+g = s_rtensor(shape, rank)
 hx = [
-    randn_rtensor(5),  # 1D
-    randn_rtensor(5),  # 1D
-    randn_rtensor([7, 7], 2),  # 2D, rank 2
-    randn_rtensor([9, 9, 13], [2, 3, 4]),  # 2D, rank 3
+    s_rtensor(5),  # 1D
+    s_rtensor(5),  # 1D
+    s_rtensor([7, 7], 2),  # 2D, rank 2
+    s_rtensor([9, 9, 18], [2, 3, 4]),  # 2D, rank 3
 ]
 
 out = outerconv(g, hx)
 G, Ax, sig = tensordec.hosvd(out, truncat=False, sig=True)
 
-append_record(
+record_append(
     "oconv-outer-convolution-tucker-rank",
     r"outer convolution $g \oconv \vec{h}$ should have the same Tucker rank as $g$, where $h_i$ are 1D signals",
     kernel_rank=rank,
@@ -202,27 +201,26 @@ append_record(
     singular_values=sig,
 )
 
-
 # ### nD convolution
 
 # In[10]:
 
 task = []
 
-ker_rank = [2, 3, 4]
-ker_size = [5, 5, 5]
-img_rank = [3, 4, 5]
+ker_rank = [2, 4, 3]
+ker_size = [6, 6, 6]
+img_rank = [3, 2, 4]
 img_size = [28, 28, 28]
 
-G = tensordec.randn_tucker([1, 1, *img_size], [1, 1, *img_rank])
+G = s_tucker([1, 1, *img_size], [1, 1, *img_rank])
 G = G / np.linalg.norm(G)
-H = tensordec.randn_tucker([1, 1, *ker_size], [1, 1, *ker_rank])
+H = s_tucker([1, 1, *ker_size], [1, 1, *ker_rank])
 
 out = torch.conv3d(torch.Tensor(G), torch.Tensor(H)).data.cpu().numpy()
 
 ker, mat, sig = tensordec.hosvd(out, truncat=False, sig=True)
 
-append_record(
+record_append(
     "oconv-rank-3D-conv",
     r"rank of 3D convolution equals tucker rank of kernel times tucker rank of image",
     kernel_size=ker_size,
@@ -233,55 +231,11 @@ append_record(
     singular_values=sig,
 )
 
-# ## h is 2D
-#
-# If flattened, => h is 1D.
-
-# In[12]:
-
-task = []
-for _ in range(8):
-    ker_rank = np.random.randint(1, 5, (2,))
-    ker_size = [
-        np.random.randint(ker_rank[i], ker_rank[1]+9, (2,))
-        for i in range(2)
-    ]
-    img_rank = np.random.randint(1, 5)
-    img_size = np.random.randint(img_rank, img_rank+9, (2,))
-
-    g = randn_rank_matrix(img_size, img_rank)
-    h0 = randn_rank_matrix(ker_size[0], ker_rank[0])
-    h1 = randn_rank_matrix(ker_size[1], ker_rank[1])
-
-    out = outerconv(g, h0, h1)
-
-    g, Ax, sig = tensordec.hosvd(out, truncat=True, sig=True)
-
-    task.append({
-        "kernel_size_0": ker_size[0],
-        "kernel_size_1": ker_size[1],
-        "kernel_rank_0": ker_rank[0],
-        "kernel_rank_1": ker_rank[1],
-        "img_size": img_size,
-        "img_rank": img_rank,
-        "reconstruct_error": np.linalg.norm(tensordec.tucker_build(g, Ax) - out),
-        "singular_values": sig,
-        "flatten_singular_values": singular_val(out, 2),
-    })
-
-append_record(
-    "oconv-outer-convolution-h-2d",
-    r"outer convolution $g \oconv h_1 h_2$ where $g$, $h_1$ and $h_2$ are both 2D signal",
-    task=task,
-)
-
-
 # ## Check Volterra
 #
 # prepare data
 
 # In[14]:
-
 
 # ### check 9: volterra 2 & 2
 #
@@ -312,10 +266,10 @@ append_record(
 
 # In[29]:
 
-h0, h1, h2 = np.random.randn(1), randn_rtensor(5), randn_rtensor([5, 5])
-g0, g1, g2 = np.random.randn(1), randn_rtensor(5), randn_rtensor([5, 5])
+h0, h1, h2 = np.random.randn(1), s_rtensor(5), s_rtensor([5, 5])
+g0, g1, g2 = np.random.randn(1), s_rtensor(5), s_rtensor([5, 5])
 
-x = randn_rtensor(64)
+x = s_rtensor(64)
 
 y = h0 + conv_ordern(h1, x) + conv_ordern(h2, x)
 z = g0 + conv_ordern(g1, y) + conv_ordern(g2, y)
@@ -331,7 +285,7 @@ f4 = outerconv(g2, h2, h2)
 pz = f0 + conv_ordern(f1, x) + conv_ordern(f2, x) + \
     conv_ordern(f3, x) + conv_ordern(f4, x)
 
-append_record(
+record_append(
     "oconv-volterra-22",
     r"""Check order 2 Volterra - Order 2 Volterra -> Order 4 Volterra
 \begin{equation}
@@ -394,9 +348,9 @@ def sigmoid(x):
 
 # In[31]:
 
-x = randn_rtensor(64)
-h = randn_rtensor(9)
-g = randn_rtensor(5)
+x = s_rtensor(64)
+h = s_rtensor(9)
+g = s_rtensor(5)
 
 y = sigmoid(conv_ordern(h, x))  # <-- we normalize here
 z = conv_ordern(g, y)
@@ -405,9 +359,9 @@ pz = 0.5 * g.sum() \
     + 1.0/4 * conv_ordern(outerconv_diag(g, h), x)\
     - 1.0/48 * conv_ordern(outerconv_diag(g, [h, h, h]), x) \
     + 1.0/480 * conv_ordern(outerconv_diag(g, [h, h, h, h, h]), x)# \
-    # - 17.0/80640 * conv_ordern(outerconv_diag(g, [h, h, h, h, h, h, h]), x)
+# - 17.0/80640 * conv_ordern(outerconv_diag(g, [h, h, h, h, h, h, h]), x)
 
-append_record(
+record_append(
     "oconv-conv-taylor",
     # r"""g * \sigma(h * x) \approx \dfrac{1}{2} + \dfrac{1}{4} (g \oconv h) * x - \dfrac{(\diag(g) \oconv h^3) * x^3}{48} + \dfrac{(\diag(g) \oconv h^5) * x^5}{480} - \dfrac{17 (\diag(g) \oconv h^7) * x^7}{80640} + O(x^{13})""",
     r"""g * \sigma(h * x) \approx \dfrac{1}{2} + \dfrac{1}{4} (g \oconv h) * x - \dfrac{(\diag(g) \oconv h^3) * x^3}{48} + \dfrac{(\diag(g) \oconv h^5) * x^5}{480} + O(x^{6})""",
@@ -420,19 +374,111 @@ append_record(
     reconstruct_error=np.linalg.norm(z - pz),
 )
 
+# check approximate order-one proxy kernel
+# Two-layer-network
+# g * sigmoid(h * x)
+# approximate
+# - order-zero term
+# - order-one term
+
+g, h = s_rtensor(9), s_rtensor(9)
+
+Tg = torch.FloatTensor(np.flip(g).copy().reshape(1, 1, -1))
+Th = torch.FloatTensor(np.flip(h).copy().reshape(1, 1, -1))
+
+model = HackerO1Net1D(g.shape[0] + h.shape[0] - 1)
+
+model.fit(lambda x: torch.conv1d(torch.sigmoid(torch.conv1d(x, Th)), Tg),
+          verbose=True)
+
+comp_w0 = 0.5 * g.sum()
+estm_w0 = model.order0
+
+comp_w1 = 1.0 / 4 * outerconv_diag(g, h)
+estm_w1 = model.order1
+
+# check outerconv and convtranspose
+_comp_w1 = 1 / 4 * torch.conv_transpose1d(Tg, Th, padding=0)
+_comp_w1 = _comp_w1.squeeze().data.cpu().detach().numpy()
+_comp_w1 = np.flip(_comp_w1).copy()
+
+assert np.linalg.norm(
+    _comp_w1 - comp_w1
+) < 1e-7, f"compute error {np.linalg.norm(_comp_w1 - comp_w1)}\n {_comp_w1}\n {comp_w1}"
+
+record_append(
+    "oconv-conv-approximate-two-layer-net",
+    r"""g * sigmoid(h * x) <-> A * x + b""",
+    activation="sigmoid",
+    num_layer="2",
+    h=h,
+    g=g,
+    computed_w0=comp_w0,
+    estimated_w0=estm_w0,
+    computed_w1=comp_w1,
+    estimated_w1=estm_w1,
+    err_w0=np.linalg.norm(comp_w0 - estm_w0),
+    err_w1=np.linalg.norm(comp_w1 - estm_w1),
+)
+
+# three layer network
+# y * sigmoid(g * sigmoid(h * x))
+
+f, g, h = s_rtensor(9), s_rtensor(9), s_rtensor(9)
+
+Th = torch.FloatTensor(np.flip(h).copy().reshape(1, 1, -1))
+Tg = torch.FloatTensor(np.flip(g).copy().reshape(1, 1, -1))
+Tf = torch.FloatTensor(np.flip(f).copy().reshape(1, 1, -1))
+
+model = HackerO1Net1D(f.shape[0] + g.shape[0] + h.shape[0] - 2)
+
+
+def __net(x):
+    _tx = torch.sigmoid(torch.conv1d(x, Th))
+    _tx = torch.sigmoid(torch.conv1d(_tx, Tg))
+    return torch.conv1d(_tx, Tf)
+
+
+model.fit(__net, verbose=True)
+
+estm_w0 = model.order0
+estm_w1 = model.order1
+
+sg = g.sum()
+sf = f.sum()
+
+comp_w0 = sf / 2 + sg / 8 * sf - sf / 48 * (sg / 2)**3 + sf / 480 * (sg / 2)**5
+
+ocv_gh = 1 / 4 * outerconv(g, h)
+alpha = 1 / 4 - 3 / 48 * (sg / 2)**2 + 5 / 480 * (sg / 2)**4
+comp_w1 = alpha * outerconv(f, ocv_gh)
+
+_comp_l1 = torch.conv_transpose1d(Th, Tg, padding=0)
+_comp_l2 = torch.conv_transpose1d(_comp_l1, Tf, padding=0)
+_comp_w1 = 1 / 4 * alpha * _comp_l2
+_comp_w1 = _comp_w1.squeeze().data.cpu().detach().numpy()
+_comp_w1 = np.flip(_comp_w1).copy()
+
+assert np.linalg.norm(
+    _comp_w1 - comp_w1
+) < 1e-7, f"compute error {np.linalg.norm(_comp_w1 - comp_w1)}\n {_comp_w1}\n {comp_w1}"
+
+record_append(
+    "oconv-conv-approximate-three-layer-net",
+    r"""f * sigmoid(g * sigmoid(h * x)) <-> A * x + b""",
+    activation="sigmoid",
+    num_layer="3",
+    h=h,
+    g=g,
+    f=f,
+    computed_w0=comp_w0,
+    estimated_w0=estm_w0,
+    computed_w1=comp_w1,
+    estimated_w1=estm_w1,
+    err_w0=np.linalg.norm(comp_w0 - estm_w0),
+    err_w1=np.linalg.norm(comp_w1 - estm_w1),
+)
+
 # write to log file
-class _jsdec(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, np.float32):
-            return float(obj)
-        if isinstance(obj, np.int64):
-            return int(obj)
-        return super().default(obj)
-
-
-with open("result/rank for outer conv result.json", "w") as rec:
-    json.dump(JLogDict, rec, cls=_jsdec, indent=2)
-
-print("done")
+record_dump_to_file(f"oconv-rank-result-{args.rand}")
+# record_dump_to_file(stdout)

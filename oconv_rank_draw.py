@@ -1,46 +1,27 @@
-import numpy as np
+import argparse
 import json
+from tkinter.tix import MAX
 
+import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib import markers
 
-# 16, 9
-plt.rcParams['figure.figsize'] = 8, 4.5
-plt.rcParams['legend.fontsize'] = 16
-plt.rcParams['legend.handlelength'] = 3
+from record_utils import record_load_file
+from plot_utils import mymarkers, savefig
 
-mymarkers = [".", "^", "+", "x", "*", ",", "|", "d", "_", "v"]
+_args = argparse.ArgumentParser()
+_args.add_argument("--rand",
+                   type=str,
+                   default="g",
+                   help="random type (g|u) gaussian or uniform")
 
-with open("result/rank for outer conv result.json", "r") as rec:
-    JLogDict = json.load(rec)
+args = _args.parse_args()
 
+MIN_SINGULAR_VALUE = 1e-16
+MAX_SINGULAR_VALUE = 1e16
 
-def save_fig(fig, tag):
-    # fig.savefig(f"result/{tag}.eps", dpi=500, bbox_inches='tight', pad_inches=0)
-    # fig.savefig(f"result/{tag}.jpg", dpi=500, bbox_inches='tight', pad_inches=0)
-    # top, bottom | left, right in [0, 1]
-    fig.subplots_adjust(top=0.99, bottom=0.06, right=0.99, left=0.1, hspace=0, wspace=0)
-    # all values in [0,1]
-    # fig.gca().margins(0.03, 0.03, x=None, y=None, tight=False)
-    
-    fig.savefig(f"result/{tag}.eps", dpi=600, bbox_inches=0, transparent=True, pad_inches=0)
-    # fig.savefig(f"result/{tag}.pdf", dpi=600, bbox_inches=0, transparent=True, pad_inches=0)
-    # fig.savefig(f"result/{tag}.png", dpi=600, bbox_inches=0, transparent=True, pad_inches=0)
-    fig.savefig(f"result/{tag}.jpg", dpi=600, bbox_inches=0, transparent=True, pad_inches=0)
-
-# rank_after_outer_convolution
-record = JLogDict["oconv-rank-after-outer-convolution"]
-print(record["info"])
-
-fig = plt.figure()
-axi = fig.add_subplot(1, 1, 1)
-for mark, task in zip(mymarkers, record["tasks"]):
-    ksize = task["signal_length"] // 2
-    axi.plot(task["singular_value"][0:-ksize], marker=mark, linestyle='dashed')
-axi.legend(["$r_g = %d$" % t["kernel_rank"] for t in record["tasks"]])
-axi.set_ylabel("singular value")
-save_fig(fig, "oconv-rank-after-outer-convolution")
-# fig.show()
-# exit()
+JLogDict = record_load_file(f"oconv-rank-result-{args.rand}")
 
 # volterra 22
 record = JLogDict["oconv-volterra-22"]
@@ -48,15 +29,18 @@ print(record["info"])
 fig = plt.figure()
 axi = fig.add_subplot(1, 1, 1)
 axi.plot(record["ground_truth"], marker=mymarkers[0], linestyle='dashed')
-axi.set_ylabel('y')
-save_fig(fig, "oconv-volterra-22-ground-truth")
+# axi.set_ylabel('y')
+# plt.show()
+# exit(0)
+savefig(fig, f"oconv-volterra-22-ground-truth-{args.rand}")
+plt.close(fig)
 
 fig = plt.figure()
 axi = fig.add_subplot(1, 1, 1)
 axi.plot(record["estimate"], marker=mymarkers[1], linestyle='dashed')
-axi.set_ylabel('y')
-save_fig(fig, "oconv-volterra-22-estimated")
-
+# axi.set_ylabel('y')
+savefig(fig, f"oconv-volterra-22-estimated-{args.rand}")
+plt.close(fig)
 # exit()
 
 # conv taylor
@@ -65,14 +49,35 @@ print(record["info"])
 fig = plt.figure()
 axi = fig.add_subplot(1, 1, 1)
 axi.plot(record["ground_truth"], marker=mymarkers[0], linestyle='dashed')
-axi.set_ylabel('y')
-save_fig(fig, "oconv-conv-taylor-ground-truth")
+# axi.set_ylabel('y')
+savefig(fig, f"oconv-conv-taylor-ground-truth-{args.rand}")
+plt.close(fig)
 
 fig = plt.figure()
 axi = fig.add_subplot(1, 1, 1)
 axi.plot(record["estimate"], marker=mymarkers[1], linestyle='dashed')
-axi.set_ylabel('y')
-save_fig(fig, "oconv-conv-taylor-estimated")
+# axi.set_ylabel('y')
+savefig(fig, f"oconv-conv-taylor-estimated-{args.rand}")
+plt.close(fig)
+
+# rank_after_outer_convolution
+record = JLogDict["oconv-rank-after-outer-convolution"]
+print(record["info"])
+
+fig = plt.figure()
+axi = fig.add_subplot(1, 1, 1)
+axi.set_yscale('log')
+for mark, task in zip(mymarkers, record["tasks"]):
+    ksize = task["signal_length"] // 2
+    yy = task["singular_value"][0:-ksize]
+    yy = np.clip(yy, MIN_SINGULAR_VALUE, MAX_SINGULAR_VALUE)
+    axi.plot(yy, marker=mark, linestyle='dashed')
+axi.legend(["$r_g = %d$" % t["kernel_rank"] for t in record["tasks"]],
+           loc='lower right')
+axi.set_ylabel("singular value ($log_{10}$)")
+savefig(fig, f"oconv-rank-after-outer-convolution-{args.rand}")
+plt.close(fig)
+# fig.show()
 
 # rank_3D_conv
 record = JLogDict["oconv-rank-3D-conv"]
@@ -80,15 +85,22 @@ print(record["info"])
 print(record["kernel_rank"], record["image_rank"])
 fig = plt.figure()
 axi = fig.add_subplot(1, 1, 1)
+axi.set_yscale('log')
 for mark, sig in zip(mymarkers, record["singular_values"][2::]):
+    sig = np.clip(sig, MIN_SINGULAR_VALUE, MAX_SINGULAR_VALUE)
     axi.plot(sig, marker=mark, linestyle='dashed')
 
-axi.legend([fr"$r_k r_g = {rk} \times {rg} = {rk * rg}$" for rk,
-            rg in zip(record["kernel_rank"], record["image_rank"])])
-axi.set_ylabel("signular value")
-save_fig(fig, "oconv-rank-3D-conv")
-# plt.show()
+legend = []
+count = len(record["kernel_rank"])
+for i, rg, rh in zip(range(1, count + 1), record["kernel_rank"],
+                     record["image_rank"]):
+    legend.append(f"$r_{{g{i}}} r_{{h{i}}} = {rg} \\times {rh} = {rg * rh}$")
 
+axi.legend(legend, loc='upper right')
+axi.set_ylabel("singular value ($log_{10}$)")
+savefig(fig, f"oconv-rank-3D-conv-{args.rand}")
+plt.close(fig)
+# plt.show()
 
 # rank_conv_kernel_image
 record = JLogDict["oconv-rank-conv-kernel-image"]
@@ -97,20 +109,25 @@ print(record["info"])
 task = record["tasks"]
 rankList = []
 for i, t in enumerate(task):
-    rankList.append((i, t["kernel_rank"] * t["image_rank"],
-                     t["kernel_rank"], t["image_rank"]))
+    rankList.append((i, t["kernel_rank"] * t["image_rank"], t["kernel_rank"],
+                     t["image_rank"]))
 
 rankList.sort(key=lambda x: x[1])
 
 fig = plt.figure()
 axi = fig.add_subplot(1, 1, 1)
+axi.set_yscale('log')
 for mark, idx in zip(mymarkers, rankList):
-    axi.plot(task[idx[0]]["singular_value"], marker=mark, linestyle='dashed')
+    yy = task[idx[0]]["singular_value"]
+    yy = np.clip(yy, MIN_SINGULAR_VALUE, MAX_SINGULAR_VALUE)
+    axi.plot(yy, marker=mark, linestyle='dashed')
 
 axi.legend(
-    [fr"$r_g r_h = {rl[2]} \times {rl[3]} = {rl[1]}$" for rl in rankList])
-axi.set_ylabel("singular value")
-save_fig(fig, "oconv-rank-conv-kernel-image")
+    [fr"$r_g r_h = {rl[2]} \times {rl[3]} = {rl[1]}$" for rl in rankList],
+    loc='best')
+axi.set_ylabel("singular value ($log_{10}$)")
+savefig(fig, f"oconv-rank-conv-kernel-image-{args.rand}")
+plt.close(fig)
 # fig.show()
 
 # outer_convolution_tucker_rank
@@ -118,19 +135,76 @@ record = JLogDict["oconv-outer-convolution-tucker-rank"]
 print(record["info"])
 
 sig = record["singular_values"]
-fig = plt.figure()
+fig = plt.figure(figsize=(8,5)) # need higher
 axi = fig.add_subplot(1, 1, 1)
+axi.set_yscale('log')
 for mark, s in zip(mymarkers, sig):
+    s = np.clip(s, MIN_SINGULAR_VALUE, MAX_SINGULAR_VALUE)
     axi.plot(s, marker=mark, linestyle='dashed')
 legend = []
-for rg, sg, rh in zip(record["kernel_rank"], record["kernel_shape"], record["signal_rank"]):
+for i, rg, sg, rh in zip(range(1,
+                               len(sig) + 1), record["kernel_rank"],
+                         record["kernel_shape"], record["signal_rank"]):
     if isinstance(rh, (list, tuple)):
         for r in rh:
-           legend.append(fr"$r_g = {rg}, ~ s_g r_h = {sg} \times {r} = {sg * r}$")
+            legend.append(
+                f"$r_{{g{i}}} = {rg}, z_{i} r_{{h{i}}} = {sg} \\times {r} = {sg * r}$"
+            )
     else:
-        legend.append(fr"$s_g = {sg}, ~ s_g r_h = {rg} \times {rh} = {rg * rh}$")
-    
-axi.legend(legend)
-axi.set_ylabel("singular value")
-save_fig(fig, "oconv-outer-convolution-tucker-rank")
+        legend.append(
+            f"$z_{i} = {sg}, r_{{g{i}}} r_{{h{i}}} = {rg} \\times {rh} = {rg * rh}$"
+        )
+
+axi.legend(legend, loc='lower right')
+axi.set_ylabel("singular value ($log_{10}$)")
+savefig(fig, f"oconv-outer-convolution-tucker-rank-{args.rand}")
 # fig.show()
+
+# rank_after_outer_convolution
+record = JLogDict["oconv-rank-zero-convolution"]
+print(record["info"])
+
+fig = plt.figure()
+axi = fig.add_subplot(1, 1, 1)
+axi.set_yscale('log')
+print("num tasks", len(record["tasks"]))
+legend = []
+for mark, task in zip(mymarkers, record["tasks"]):
+    ksize = task["signal_length"] // 2
+    yy = task["singular_value"]
+    yy = np.clip(yy, MIN_SINGULAR_VALUE, MAX_SINGULAR_VALUE)
+    axi.plot(yy, marker=mark, linestyle='dashed')
+    rg = task['kernel_rank']
+    rh1 = task["signal_init_len1"]
+    rh2 = task["signal_init_len2"]
+    # legend.append(
+    #     f"$\min(r_g = {rg}, T_1 = {rh1}, T_2 = {rh2})={min(rg, rh1, rh2)}$")
+    legend.append(
+        f"$\min({rg}, {rh1}, {rh2})={min(rg, rh1, rh2)}$")
+
+axi.legend(legend, loc='lower right')
+axi.set_ylabel("singular value ($log_{10}$)")
+savefig(fig, f"oconv-rank-zero-convolution-{args.rand}")
+plt.close(fig)
+
+# list
+# - oconv-conv-approximate-two-layer-net
+# - oconv-conv-approximate-three-layer-net
+
+for l in ["two", "three"]:
+    record = JLogDict[f"oconv-conv-approximate-{l}-layer-net"]
+    print(record["info"])
+
+    fig = plt.figure()
+    axi = fig.add_subplot(1, 1, 1)
+    axi.plot(record["computed_w1"], marker=mymarkers[0], linestyle="dashed")
+    savefig(fig,
+            f"oconv-conv-approximate-{l}-layer-net-w1-computed-{args.rand}")
+    plt.close(fig)
+
+    fig = plt.figure()
+    axi = fig.add_subplot(1, 1, 1)
+    axi.plot(record["estimated_w1"], marker=mymarkers[1], linestyle="dashed")
+    savefig(fig,
+            f"oconv-conv-approximate-{l}-layer-net-w1-estimated-{args.rand}")
+    plt.close(fig)
